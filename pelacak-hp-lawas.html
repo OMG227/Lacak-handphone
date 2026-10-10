@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pelacak HP Lawas</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css">
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#0b0f14;color:#e6edf3;font-family:Arial,Helvetica,sans-serif}
+.w{max-width:640px;margin:auto;padding:12px}
+h1{font-size:19px;margin:6px 0 2px}
+.sub{font-size:12px;color:#8b9bb0;margin-bottom:10px}
+.c{background:#141b24;border:1px solid #223041;border-radius:12px;padding:12px;margin-bottom:10px}
+.tabs{display:flex;gap:6px;margin-bottom:10px}
+.tabs button{flex:1}
+button{background:#38bdf8;color:#04121c;border:0;border-radius:8px;padding:12px;font-size:15px;font-weight:bold;width:100%;margin-top:6px}
+button.s{background:#0e141b;color:#e6edf3;border:1px solid #223041}
+button.r{background:#ef4444;color:#fff}
+button.on{background:#38bdf8;color:#04121c}
+input,select{width:100%;background:#0e141b;color:#e6edf3;border:1px solid #223041;border-radius:8px;padding:11px;font-size:15px;margin-top:4px}
+label{font-size:13px;color:#8b9bb0;display:block;margin-top:8px}
+.code{font-size:26px;letter-spacing:4px;text-align:center;font-weight:bold;color:#38bdf8;padding:8px;background:#0e141b;border-radius:8px;margin-top:6px}
+.st{font-size:13px;line-height:1.7;color:#8b9bb0}.st b{color:#e6edf3}
+.dot{display:inline-block;width:10px;height:10px;border-radius:50%;background:#8b9bb0;margin-right:6px}
+.dot.g{background:#22c55e}.dot.o{background:#f59e0b}
+#map{height:320px;border-radius:10px;margin-bottom:8px}
+.hide{display:none}
+.note{font-size:12px;color:#f59e0b;margin-top:6px}
+a{color:#38bdf8}
+</style>
+</head>
+<body>
+<div class="w">
+<h1>📱 Pelacak HP Lawas</h1>
+<div class="sub">Pakai HP lama sebagai pelacak. Pantau lokasinya dari HP/laptop lain.</div>
+
+<div class="c" id="setup">
+<b style="font-size:14px">1. Database Firebase</b>
+<label>URL Realtime Database (contoh: https://nama-default-rtdb.firebaseio.com)</label>
+<input id="dburl" placeholder="https://xxxx-default-rtdb.firebaseio.com">
+<button class="s" onclick="saveDb()">Simpan</button>
+<div class="note">Rules database harus mengizinkan baca/tulis: {"rules":{".read":true,".write":true}}. Hanya untuk pemakaian pribadi.</div>
+</div>
+
+<div class="tabs">
+<button class="on" id="tT" onclick="tab('T')">HP Lawas (Pelacak)</button>
+<button class="s" id="tO" onclick="tab('O')">Pemilik (Pantau)</button>
+</div>
+
+<div id="pT">
+<div class="c">
+<div class="sub" style="margin:0">Kode pairing HP ini</div>
+<div class="code" id="mycode">-</div>
+<button class="s" onclick="newCode()">Buat kode baru</button>
+<label>Kirim lokasi tiap</label>
+<select id="intv"><option value="15">15 detik</option><option value="30" selected>30 detik</option><option value="60">1 menit</option><option value="300">5 menit</option></select>
+<button id="bStart" onclick="startTrack()">▶ Mulai bagikan lokasi</button>
+<button id="bStop" class="r hide" onclick="stopTrack()">■ Berhenti</button>
+<div class="st" style="margin-top:10px"><span class="dot" id="td"></span><span id="tst">Belum aktif</span><br>
+Baterai: <b id="tbat">-</b> · Terkirim: <b id="tsent">0</b>x</div>
+<div class="note">Layar menampilkan status ini selama pelacakan aktif. Biarkan halaman terbuka, colok charger, dan matikan penghemat baterai untuk browser.</div>
+</div>
+</div>
+
+<div id="pO" class="hide">
+<div class="c">
+<label style="margin-top:0">Masukkan kode HP lawas</label>
+<input id="ocode" placeholder="KODE" style="text-transform:uppercase" maxlength="8">
+<button onclick="startWatch()">Pantau</button>
+</div>
+<div class="c hide" id="ov">
+<div id="map"></div>
+<div class="st"><span class="dot" id="od"></span><b id="oage">-</b><br>
+Koordinat: <b id="ocoord">-</b><br>Akurasi: <b id="oacc">-</b> · Baterai: <b id="obat">-</b><br>
+<a id="gm" href="#" target="_blank">Buka di Google Maps</a></div>
+<button class="r" onclick="ring()">🔔 Bunyikan HP</button>
+<button class="s" onclick="clearHist()">Hapus riwayat jejak</button>
+</div>
+</div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+<script>
+var $=function(i){return document.getElementById(i)};
+var LS=window.localStorage||{};
+function db(){return (LS.dburl||'').replace(/\/+$/,'')}
+function req(m,p,b,cb){
+  var x=new XMLHttpRequest();x.open(m,db()+p,true);x.timeout=15000;
+  x.onreadystatechange=function(){if(x.readyState==4){var j=null;try{j=JSON.parse(x.responseText)}catch(e){}
+    cb((x.status>=200&&x.status<300)?null:(x.status||'offline'),j)}};
+  x.send(b!==null&&b!==undefined?JSON.stringify(b):null);
+}
+function saveDb(){var v=$('dburl').value.replace(/\s/g,'');if(v.indexOf('https://')!==0){alert('URL harus diawali https://');return}LS.dburl=v;alert('Tersimpan')}
+$('dburl').value=LS.dburl||'';
+function tab(t){$('pT').className=t=='T'?'':'hide';$('pO').className=t=='O'?'':'hide';
+  $('tT').className=t=='T'?'on':'s';$('tO').className=t=='O'?'on':'s';
+  if(t=='O'&&map)setTimeout(function(){map.invalidateSize()},100)}
+function genCode(){var a='ABCDEFGHJKLMNPQRSTUVWXYZ23456789',s='';for(var i=0;i<8;i++)s+=a.charAt(Math.floor(Math.random()*a.length));return s}
+function newCode(){if(tracking){alert('Hentikan pelacakan dulu');return}LS.code=genCode();$('mycode').textContent=LS.code}
+if(!LS.code)LS.code=genCode();$('mycode').textContent=LS.code;
+
+/* ===== MODE PELACAK ===== */
+var tracking=false,wid=null,sendT=null,ringT=null,last=null,bat=null,sent=0,wl=null,actx=null,beeping=false;
+function initBat(){if(navigator.getBattery){navigator.getBattery().then(function(b){var u=function(){bat={l:Math.round(b.level*100),c:b.charging};$('tbat').textContent=bat.l+'%'+(b.charging?' ⚡':'')};u();b.onlevelchange=u;b.onchargingchange=u})}}
+function setTs(t,c){$('tst').textContent=t;$('td').className='dot '+(c||'')}
+function startTrack(){
+  if(!db()){alert('Isi URL Firebase dulu');return}
+  if(!navigator.geolocation){alert('Browser tidak mendukung lokasi');return}
+  try{var AC=window.AudioContext||window.webkitAudioContext;if(AC&&!actx)actx=new AC()}catch(e){}
+  tracking=true;$('bStart').className='hide';$('bStop').className='r';
+  setTs('Mencari sinyal GPS…','o');initBat();
+  wid=navigator.geolocation.watchPosition(function(p){last=p;setTs('Aktif — lokasi didapat','g')},
+    function(e){setTs('Gagal lokasi: '+(e.code==1?'izin ditolak':'sinyal lemah'),'o')},
+    {enableHighAccuracy:true,maximumAge:10000,timeout:30000});
+  var iv=parseInt($('intv').value,10)*1000;
+  sendT=setInterval(send,iv);setTimeout(send,5000);
+  ringT=setInterval(checkRing,10000);
+  lockScreen();
+}
+function stopTrack(){
+  tracking=false;if(wid!==null)navigator.geolocation.clearWatch(wid);
+  clearInterval(sendT);clearInterval(ringT);if(wl){try{wl.release()}catch(e){}wl=null}
+  $('bStart').className='';$('bStop').className='r hide';setTs('Dihentikan','');
+}
+function send(){
+  if(!tracking||!last)return;
+  var o={lat:last.coords.latitude,lon:last.coords.longitude,acc:Math.round(last.coords.accuracy),t:new Date().getTime(),bat:bat?bat.l:null,chg:bat?bat.c:null};
+  var c=LS.code;
+  req('PUT','/track/'+c+'/last.json',o,function(e){
+    if(e){setTs('Gagal kirim ('+e+'), akan dicoba lagi','o');return}
+    sent++;$('tsent').textContent=sent;setTs('Aktif — terakhir kirim '+new Date().toLocaleTimeString(),'g');
+    req('POST','/track/'+c+'/hist.json',o,function(){});
+  });
+}
+function lockScreen(){if(navigator.wakeLock){navigator.wakeLock.request('screen').then(function(l){wl=l}).catch(function(){})}}
+document.addEventListener('visibilitychange',function(){if(tracking&&document.visibilityState=='visible')lockScreen()});
+function checkRing(){
+  req('GET','/track/'+LS.code+'/ring.json',null,function(e,j){
+    if(!e&&j===true){req('PUT','/track/'+LS.code+'/ring.json',false,function(){});beep()}
+  });
+}
+function beep(){
+  if(!actx||beeping)return;beeping=true;var n=0;
+  var iv=setInterval(function(){
+    try{var o=actx.createOscillator(),g=actx.createGain();o.frequency.value=n%2?880:660;o.connect(g);g.connect(actx.destination);g.gain.value=1;o.start();o.stop(actx.currentTime+0.4)}catch(e){}
+    n++;if(n>60){clearInterval(iv);beeping=false}
+  },500);
+  if(navigator.vibrate)navigator.vibrate([500,200,500,200,500]);
+}
+
+/* ===== MODE PEMILIK ===== */
+var map=null,mk=null,ac=null,line=null,watchT=null,wcode='',first=true;
+function startWatch(){
+  var c=$('ocode').value.toUpperCase().replace(/\s/g,'');
+  if(!db()){alert('Isi URL Firebase dulu');return}
+  if(c.length<4){alert('Kode belum benar');return}
+  wcode=c;first=true;$('ov').className='c';
+  if(!map){map=L.map('map').setView([-2.5,118],4);
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:18,attribution:'© OpenStreetMap'}).addTo(map)}
+  setTimeout(function(){map.invalidateSize()},150);
+  clearInterval(watchT);poll();watchT=setInterval(poll,10000);
+}
+function ago(t){var s=Math.round((new Date().getTime()-t)/1000);
+  if(s<60)return s+' detik lalu';if(s<3600)return Math.round(s/60)+' menit lalu';
+  if(s<86400)return Math.round(s/3600)+' jam lalu';return Math.round(s/86400)+' hari lalu'}
+function poll(){
+  req('GET','/track/'+wcode+'/last.json',null,function(e,j){
+    if(e){$('oage').textContent='Gagal ambil data ('+e+')';return}
+    if(!j){$('oage').textContent='Belum ada data untuk kode ini';$('od').className='dot';return}
+    var ll=[j.lat,j.lon],old=(new Date().getTime()-j.t)>600000;
+    $('od').className='dot '+(old?'o':'g');
+    $('oage').textContent='Update '+ago(j.t)+(old?' (HP mungkin mati/offline)':'');
+    $('ocoord').textContent=j.lat.toFixed(5)+', '+j.lon.toFixed(5);
+    $('oacc').textContent='±'+j.acc+' m';
+    $('obat').textContent=j.bat!==null&&j.bat!==undefined?j.bat+'%'+(j.chg?' ⚡':''):'-';
+    $('gm').href='https://www.google.com/maps?q='+j.lat+','+j.lon;
+    if(mk)map.removeLayer(mk);if(ac)map.removeLayer(ac);
+    mk=L.marker(ll).addTo(map);
+    ac=L.circle(ll,{radius:j.acc,color:'#38bdf8',weight:1,fillOpacity:.1}).addTo(map);
+    if(first){map.setView(ll,16);first=false}
+  });
+  req('GET','/track/'+wcode+'/hist.json?orderBy=%22%24key%22&limitToLast=100',null,function(e,j){
+    if(e||!j)return;var pts=[],k;
+    for(k in j){if(j.hasOwnProperty(k))pts.push([j[k].lat,j[k].lon])}
+    if(line)map.removeLayer(line);
+    if(pts.length>1)line=L.polyline(pts,{color:'#f59e0b',weight:3}).addTo(map);
+  });
+}
+function ring(){req('PUT','/track/'+wcode+'/ring.json',true,function(e){alert(e?'Gagal kirim perintah':'Perintah dikirim. HP berbunyi dalam ±10 detik.')})}
+function clearHist(){if(confirm('Hapus semua riwayat jejak?'))req('DELETE','/track/'+wcode+'/hist.json',null,function(){if(line){map.removeLayer(line);line=null}})}
+</script>
+</body>
+</html>
